@@ -7,13 +7,13 @@ app = Flask(__name__)
 app.config["MYSQL_USER"] = "root"
 app.config["MYSQL_PASSWORD"] = "PHW#84#jeor"
 app.config["MYSQL_DB"] = "datasets"
-app.config["MYSQL_HOST"] = "localhost"
-app.config["MYSQL_PORT"] = 3306
+app.config["MYSQL_HOST"] = "localhost"  
+app.config["MYSQL_PORT"] = 3306         
 app.config["MYSQL_CURSORCLASS"] = "DictCursor"
 
 mysql = MySQL(app)
 
-
+# Helper function to fetch data
 def data_fetch(query, params=None):
     cur = mysql.connection.cursor()
     cur.execute(query, params)
@@ -21,7 +21,7 @@ def data_fetch(query, params=None):
     cur.close()
     return data
 
-# Search for each tablename and specific id number
+# Search endpoints for each table
 @app.route("/users/search", methods=["GET"])
 def search_users():
     user_id = request.args.get('id')
@@ -92,11 +92,11 @@ def search_total_sales():
     else:
         return jsonify({'message': 'Total sales record not found'}), 404
 
-# Read operations
 @app.route('/')
 def hello_world():
     return "<p>Hello, World!</p>"
 
+# USING INNER JOIN
 @app.route('/users/<int:id>/orders', methods=['GET'])
 def get_user_orders(id):
     query = """
@@ -109,7 +109,8 @@ def get_user_orders(id):
     data = data_fetch(query, (id,))
     return make_response(jsonify({"users_id": id, "count": len(data), "orders": data}), 200)
 
-# Create operation
+
+#CREATE/UPDATE
 @app.route("/users", methods=["POST"])
 def create_users():
     data = request.json
@@ -130,8 +131,27 @@ def create_users():
         "age": age
     }
     return jsonify({'message': 'User added successfully', 'user': created_user}), 201
+# CRUD endpoints for users table
+@app.route("/users", methods=["GET"])
+def get_users():
+    data = data_fetch("SELECT * FROM users")
+    return make_response(jsonify(data), 200)
 
-# Update operation
+@app.route("/users", methods=["POST"])
+def create_user():
+    data = request.json
+    name = data.get('name')
+    email = data.get('email')
+    age = data.get('age')
+    if not all([name, email, age]):
+        return jsonify({'message': 'Missing required fields'}), 400
+    cur = mysql.connection.cursor()
+    cur.execute("INSERT INTO users (name, email, age) VALUES (%s, %s, %s)", (name, email, age))
+    mysql.connection.commit()
+    cur.close()
+    return jsonify({'message': 'User added successfully'}), 201
+
+#UPDATE
 @app.route("/users/<int:id>", methods=["PUT"])
 def update_user(id):
     data = request.json
@@ -146,7 +166,6 @@ def update_user(id):
     cur.close()
     return jsonify({'message': 'User updated successfully'})
 
-# Delete operation
 @app.route("/users/<int:id>", methods=["DELETE"])
 def delete_user(id):
     cur = mysql.connection.cursor()
@@ -155,31 +174,29 @@ def delete_user(id):
     cur.close()
     return jsonify({'message': 'User deleted successfully'})
 
-#READ for orders/products/supplier/total_sales table
-
+# CRUD endpoints for orders table
 @app.route("/orders", methods=["GET"])
 def get_orders():
     data = data_fetch("SELECT * FROM orders")
     return make_response(jsonify(data), 200)
 
-
+# CRUD endpoints for products table
 @app.route("/products", methods=["GET"])
 def get_products():
     data = data_fetch("SELECT * FROM products")
     return make_response(jsonify(data), 200)
 
-
+# CRUD endpoints for supplier table
 @app.route("/supplier", methods=["GET"])
 def get_supplier():
     data = data_fetch("SELECT * FROM supplier")
     return make_response(jsonify(data), 200)
 
-
+# CRUD endpoints for total_sales table
 @app.route("/total_sales", methods=["GET"])
 def get_total_sales():
     data = data_fetch("SELECT * FROM total_sales")
     return make_response(jsonify(data), 200)
-
 
 if __name__ == "__main__":
     app.run(debug=True)
