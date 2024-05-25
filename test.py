@@ -1,5 +1,8 @@
 from flask import Flask, make_response, jsonify, request
 from flask_mysqldb import MySQL
+import jwt
+import datetime
+from functools import wraps
 
 app = Flask(__name__)
 
@@ -7,13 +10,14 @@ app = Flask(__name__)
 app.config["MYSQL_USER"] = "root"
 app.config["MYSQL_PASSWORD"] = "PHW#84#jeor"
 app.config["MYSQL_DB"] = "datasets"
-app.config["MYSQL_HOST"] = "localhost"  
-app.config["MYSQL_PORT"] = 3306         
+app.config["MYSQL_HOST"] = "localhost"
+app.config["MYSQL_PORT"] = 3306
 app.config["MYSQL_CURSORCLASS"] = "DictCursor"
 
 mysql = MySQL(app)
 
-# Helper function to fetch data
+app.config['SECRET_KEY'] = 'admin123'
+
 def data_fetch(query, params=None):
     cur = mysql.connection.cursor()
     cur.execute(query, params)
@@ -21,9 +25,44 @@ def data_fetch(query, params=None):
     cur.close()
     return data
 
-# Search endpoints for each table
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+
+        if 'x-access-token' in request.headers:
+            token = request.headers['x-access-token']
+
+        if not token:
+            return jsonify({'message': 'Token is missing!'}), 401
+
+        try:
+            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+            current_user = data['user']
+        except:
+            return jsonify({'message': 'Token is invalid!'}), 401
+
+        return f(current_user, *args, **kwargs)
+    return decorated
+
+@app.route('/login', methods=['POST'])
+def login():
+    auth = request.authorization
+
+    if not auth or not auth.username or not auth.password:
+        return make_response('Could not verify', 401, {'WWW-Authenticate': 'Basic realm="Login required!"'})
+
+    # Dummy check for username and password (use database in production)
+    if auth.username == '' and auth.password == 'password':
+        token = jwt.encode({'user': auth.username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=30)},
+                           app.config['SECRET_KEY'], algorithm="HS256")
+        return jsonify({'token': token})
+
+    return make_response('Could not verify', 401, {'WWW-Authenticate': 'Basic realm="Login required!"'})
+
 @app.route("/users/search", methods=["GET"])
-def search_users():
+@token_required
+def search_users(current_user):
     user_id = request.args.get('id')
     if user_id is None:
         return jsonify({'message': 'Missing id parameter'}), 400
@@ -37,7 +76,8 @@ def search_users():
         return jsonify({'message': 'User not found'}), 404
 
 @app.route("/orders/search", methods=["GET"])
-def search_orders():
+@token_required
+def search_orders(current_user):
     order_id = request.args.get('id')
     if order_id is None:
         return jsonify({'message': 'Missing id parameter'}), 400
@@ -51,7 +91,8 @@ def search_orders():
         return jsonify({'message': 'Order not found'}), 404
 
 @app.route("/products/search", methods=["GET"])
-def search_products():
+@token_required
+def search_products(current_user):
     product_id = request.args.get('id')
     if product_id is None:
         return jsonify({'message': 'Missing id parameter'}), 400
@@ -65,7 +106,8 @@ def search_products():
         return jsonify({'message': 'Product not found'}), 404
 
 @app.route("/supplier/search", methods=["GET"])
-def search_supplier():
+@token_required
+def search_supplier(current_user):
     supplier_id = request.args.get('id')
     if supplier_id is None:
         return jsonify({'message': 'Missing id parameter'}), 400
@@ -79,7 +121,8 @@ def search_supplier():
         return jsonify({'message': 'Supplier not found'}), 404
 
 @app.route("/total_sales/search", methods=["GET"])
-def search_total_sales():
+@token_required
+def search_total_sales(current_user):
     sales_id = request.args.get('id')
     if sales_id is None:
         return jsonify({'message': 'Missing id parameter'}), 400
@@ -96,9 +139,9 @@ def search_total_sales():
 def hello_world():
     return "<p>Hello, World!</p>"
 
-# USING INNER JOIN
 @app.route('/users/<int:id>/orders', methods=['GET'])
-def get_user_orders(id):
+@token_required
+def get_user_orders(current_user, id):
     query = """
     SELECT users.name AS user_name, products.name AS product_name, orders.order_date
     FROM users
@@ -109,10 +152,9 @@ def get_user_orders(id):
     data = data_fetch(query, (id,))
     return make_response(jsonify({"users_id": id, "count": len(data), "orders": data}), 200)
 
-
-#CREATE/UPDATE
 @app.route("/users", methods=["POST"])
-def create_users():
+@token_required
+def create_users(current_user):
     data = request.json
     name = data.get('name')
     email = data.get('email')
@@ -122,7 +164,7 @@ def create_users():
     cur = mysql.connection.cursor()
     cur.execute("INSERT INTO users (name, email, age) VALUES (%s, %s, %s)", (name, email, age))
     mysql.connection.commit()
-    user_id = cur.lastrowid  # Get the ID of the last inserted row
+    user_id = cur.lastrowid
     cur.close()
     created_user = {
         "id": user_id,
@@ -131,29 +173,10 @@ def create_users():
         "age": age
     }
     return jsonify({'message': 'User added successfully', 'user': created_user}), 201
-# CRUD endpoints for users table
-@app.route("/users", methods=["GET"])
-def get_users():
-    data = data_fetch("SELECT * FROM users")
-    return make_response(jsonify(data), 200)
 
-@app.route("/users", methods=["POST"])
-def create_user():
-    data = request.json
-    name = data.get('name')
-    email = data.get('email')
-    age = data.get('age')
-    if not all([name, email, age]):
-        return jsonify({'message': 'Missing required fields'}), 400
-    cur = mysql.connection.cursor()
-    cur.execute("INSERT INTO users (name, email, age) VALUES (%s, %s, %s)", (name, email, age))
-    mysql.connection.commit()
-    cur.close()
-    return jsonify({'message': 'User added successfully'}), 201
-
-#UPDATE
 @app.route("/users/<int:id>", methods=["PUT"])
-def update_user(id):
+@token_required
+def update_user(current_user, id):
     data = request.json
     name = data.get('name')
     email = data.get('email')
@@ -167,34 +190,41 @@ def update_user(id):
     return jsonify({'message': 'User updated successfully'})
 
 @app.route("/users/<int:id>", methods=["DELETE"])
-def delete_user(id):
+@token_required
+def delete_user(current_user, id):
     cur = mysql.connection.cursor()
     cur.execute("DELETE FROM users WHERE id = %s", (id,))
     mysql.connection.commit()
     cur.close()
     return jsonify({'message': 'User deleted successfully'})
 
-# CRUD endpoints for orders table
+@app.route("/users", methods=["GET"])
+@token_required
+def get_users(current_user):
+    data = data_fetch("SELECT * FROM users")
+    return make_response(jsonify(data), 200)
+
 @app.route("/orders", methods=["GET"])
-def get_orders():
+@token_required
+def get_orders(current_user):
     data = data_fetch("SELECT * FROM orders")
     return make_response(jsonify(data), 200)
 
-# CRUD endpoints for products table
 @app.route("/products", methods=["GET"])
-def get_products():
+@token_required
+def get_products(current_user):
     data = data_fetch("SELECT * FROM products")
     return make_response(jsonify(data), 200)
 
-# CRUD endpoints for supplier table
 @app.route("/supplier", methods=["GET"])
-def get_supplier():
+@token_required
+def get_supplier(current_user):
     data = data_fetch("SELECT * FROM supplier")
     return make_response(jsonify(data), 200)
 
-# CRUD endpoints for total_sales table
 @app.route("/total_sales", methods=["GET"])
-def get_total_sales():
+@token_required
+def get_total_sales(current_user):
     data = data_fetch("SELECT * FROM total_sales")
     return make_response(jsonify(data), 200)
 
